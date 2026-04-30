@@ -1,4 +1,4 @@
-# app.py — Scrollable Teaching + Valuation App
+# app.py — Scrollable Teaching Valuation App (Equations Included)
 
 import streamlit as st
 import pandas as pd
@@ -9,10 +9,10 @@ import time
 
 st.set_page_config(page_title="DCF Learning Platform", layout="wide")
 
-st.title("📘 Equity Valuation — Step-by-Step")
+st.title("📘 Equity Valuation — Step-by-Step with Equations")
 
 # ---------------------------
-# TICKER INPUT
+# LOAD DATA
 # ---------------------------
 st.sidebar.header("Load Company")
 
@@ -61,10 +61,11 @@ if not data["price"]:
 st.header("1️⃣ Market Inputs")
 
 st.markdown("""
-These are the **core building blocks** of valuation.
+### Equations
+- **Equity Value = Price × Shares**
+- **Enterprise Value = Equity + Debt − Cash**
 
-- Price and Shares → Equity Value  
-- Debt and Cash → move from Enterprise to Equity
+These are the starting building blocks of valuation.
 """)
 
 price = st.number_input("Stock Price", value=float(data["price"]))
@@ -73,17 +74,20 @@ debt = st.number_input("Debt (M)", value=float(data["debt"]/1_000_000))
 cash = st.number_input("Cash (M)", value=float(data["cash"]/1_000_000))
 
 equity_value = price * shares
-st.info(f"Equity Value = {equity_value:,.2f}M")
+st.success(f"Equity Value = {equity_value:,.2f}M")
 
 # =========================================================
-# 2. COST OF EQUITY (CAPM)
+# 2. COST OF EQUITY
 # =========================================================
 st.header("2️⃣ Cost of Equity (CAPM)")
 
 st.markdown("""
-This measures required return for equity investors.
-
+### Equation
 **Re = Risk-Free Rate + Beta × Equity Risk Premium**
+
+- Risk-Free → baseline return  
+- Beta → volatility vs market  
+- ERP → extra return investors demand
 """)
 
 rf = st.slider("Risk-Free Rate %", 0, 10, 4)/100
@@ -99,9 +103,10 @@ st.success(f"Cost of Equity = {cost_equity:.2%}")
 st.header("3️⃣ Weighted Average Cost of Capital (WACC)")
 
 st.markdown("""
-WACC blends cost of equity and debt.
+### Equation
+**WACC = (E/(E+D))×Re + (D/(E+D))×Rd×(1−Tax)**
 
-**WACC = (E/(E+D))×Re + (D/(E+D))×Rd×(1-Tax)**
+Blends cost of equity and debt based on capital structure.
 """)
 
 market_cap = equity_value
@@ -114,14 +119,15 @@ wacc = (market_cap/(market_cap+debt))*cost_equity + \
 st.success(f"WACC = {wacc:.2%}")
 
 # =========================================================
-# 4. CASH FLOW FORECAST
+# 4. FCFF
 # =========================================================
-st.header("4️⃣ Forecast Free Cash Flow (FCFF)")
+st.header("4️⃣ Forecast Free Cash Flow")
 
 st.markdown("""
-We project future cash flows.
-
+### Equation
 **FCFFₜ = FCFF₀ × (1 + g)ᵗ**
+
+Projects future operating cash flow.
 """)
 
 fcff0 = st.number_input("Current FCFF ($M)", value=60000.0)
@@ -137,9 +143,10 @@ st.write("Projected FCFF:", [round(x,2) for x in fcff])
 st.header("5️⃣ Discount Cash Flows")
 
 st.markdown("""
-Future cash is worth less today.
-
+### Equation
 **PV = CFₜ / (1 + WACC)ᵗ**
+
+Converts future cash into today's value.
 """)
 
 pv = [cf/(1+wacc)**t for t,cf in enumerate(fcff,1)]
@@ -151,9 +158,10 @@ st.write("Present Values:", [round(x,2) for x in pv])
 st.header("6️⃣ Terminal Value")
 
 st.markdown("""
-Captures value beyond forecast period.
+### Equation
+**TV = CFₙ × (1 + g) / (WACC − g)**
 
-**TV = CFₙ × (1 + g) / (WACC - g)**
+Captures value beyond forecast period.
 """)
 
 tg = st.slider("Terminal Growth %", 0, 5, 3)/100
@@ -169,6 +177,11 @@ st.success(f"PV Terminal Value = {pv_tv:,.2f}")
 # =========================================================
 st.header("7️⃣ Enterprise Value")
 
+st.markdown("""
+### Equation
+**EV = Σ PV(FCFF) + PV(Terminal Value)**
+""")
+
 ev = sum(pv) + pv_tv
 st.success(f"Enterprise Value = {ev:,.2f}")
 
@@ -176,6 +189,11 @@ st.success(f"Enterprise Value = {ev:,.2f}")
 # 8. EQUITY VALUE
 # =========================================================
 st.header("8️⃣ Equity Value")
+
+st.markdown("""
+### Equation
+**Equity Value = EV − Debt + Cash**
+""")
 
 equity = ev - debt + cash
 value_per_share = equity / shares
@@ -189,9 +207,10 @@ st.success(f"Value per Share = {value_per_share:,.2f}")
 st.header("9️⃣ Relative Valuation (P/E)")
 
 st.markdown("""
-Instead of DCF, we can value using multiples.
+### Equation
+**Value = EPS × P/E Multiple**
 
-**Value = EPS × P/E**
+Uses market comparables instead of cash flows.
 """)
 
 eps = st.number_input("EPS", value=float(data["eps"] or 0))
@@ -201,9 +220,16 @@ pe_value = eps * pe
 st.success(f"P/E Value = {pe_value:,.2f}")
 
 # =========================================================
-# FINAL VALUE
+# 10. FINAL VALUE
 # =========================================================
 st.header("🔟 Final Valuation")
+
+st.markdown("""
+### Equation
+**Intrinsic Value = Average(DCF Value, Relative Value)**
+
+Combines multiple valuation approaches.
+""")
 
 final_value = np.mean([value_per_share, pe_value])
 
