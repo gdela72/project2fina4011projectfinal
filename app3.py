@@ -143,31 +143,161 @@ c4.metric("Signal", "BUY" if avg>current_price else "SELL")
 st.subheader("Price Chart")
 st.line_chart(hist["Close"])
 
-# ---------------------------
-# EXCEL MODEL (FORMULA-BASED)
-# ---------------------------
 def to_excel():
     output = BytesIO()
+
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
         wb = writer.book
 
+        # =========================
+        # INPUTS SHEET
+        # =========================
         inputs = pd.DataFrame({
-            "Variable":["Price","Shares","MarketCap","Debt","Cash","Beta","RF","ERP","COD","Tax","Growth","TG","Years","FCFE0","FCFF0","PE","EPS"],
-            "Value":[current_price,shares,market_cap,debt,cash,beta,rf,erp,cod,tax,growth,terminal_growth,years,fcfe0,fcff0,pe,eps]
+            "Variable": [
+                "Current Price","Shares (M)","Market Cap (M)",
+                "Debt (M)","Cash (M)",
+                "Beta","Risk Free","ERP","Cost of Debt","Tax Rate",
+                "Growth","Terminal Growth","Forecast Years",
+                "FCFF0","Target P/E","EPS"
+            ],
+            "Value": [
+                current_price,shares,market_cap,
+                debt,cash,
+                beta,rf,erp,cod,tax,
+                growth,terminal_growth,years,
+                fcff0,pe,eps
+            ]
         })
+
         inputs.to_excel(writer, sheet_name="Inputs", index=False)
 
+        # Helper references
+        def ref(r): return f"Inputs!B{r}"
+
+        PRICE = ref(2)
+        SHARES = ref(3)
+        MCAP = ref(4)
+        DEBT = ref(5)
+        CASH = ref(6)
+        BETA = ref(7)
+        RF = ref(8)
+        ERP = ref(9)
+        COD = ref(10)
+        TAX = ref(11)
+        G = ref(12)
+        TG = ref(13)
+        N = int(years)
+        FCFF0 = ref(14)
+
+        # =========================
+        # WACC SHEET
+        # =========================
+        wacc_ws = wb.add_worksheet("WACC")
+
+        wacc_ws.write("A1","Cost of Equity")
+        wacc_ws.write_formula("B1", f"={RF}+{BETA}*{ERP}")
+
+        wacc_ws.write("A2","Weight Equity")
+        wacc_ws.write_formula("B2", f"={MCAP}/({MCAP}+{DEBT})")
+
+        wacc_ws.write("A3","Weight Debt")
+        wacc_ws.write_formula("B3", f"={DEBT}/({MCAP}+{DEBT})")
+
+        wacc_ws.write("A4","WACC")
+        wacc_ws.write_formula("B4",
+            f"=B2*B1 + B3*{COD}*(1-{TAX})"
+        )
+
+        # =========================
+        # MODEL SHEET (DCF)
+        # =========================
         ws = wb.add_worksheet("DCF")
-        for i in range(1,years+1):
-            ws.write(i,0,i)
-            ws.write_formula(i,1,f"=Inputs!B14*(1+Inputs!B11)^{i}")
+
+        headers = ["Year","FCFF","Discount Factor","PV FCFF"]
+        for i,h in enumerate(headers):
+            ws.write(0,i,h)
+
+        for t in range(1, N+1):
+            row = t
+
+            ws.write(row,0,t)
+
+            # FCFF forecast
+            ws.write_formula(row,1,
+                f"={FCFF0}*(1+{G})^{t}"
+            )
+
+            # Discount factor
+            ws.write_formula(row,2,
+                f"=1/(1+WACC!B4)^{t}"
+            )
+
+            # PV
+            ws.write_formula(row,3,
+                f"=B{row+1}*C{row+1}"
+            )
+
+        last = N + 1
+
+        # Terminal Value
+        ws.write("A10","Terminal Value")
+        ws.write_formula("B10",
+            f"=B{last}*(1+{TG})/(WACC!B4-{TG})"
+        )
+
+        ws.write("A11","PV Terminal")
+        ws.write_formula("B11",
+            f"=B10/(1+WACC!B4)^{N}"
+        )
+
+        ws.write("A13","Enterprise Value")
+        ws.write_formula("B13",
+            f"=SUM(D2:D{last})+B11"
+        )
+
+        ws.write("A14","Equity Value")
+        ws.write_formula("B14",
+            f"=B13-{DEBT}+{CASH}"
+        )
+
+        ws.write("A15","Value per Share")
+        ws.write_formula("B15",
+            f"=B14/{SHARES}"
+        )
+
+        # =========================
+        # SUMMARY SHEET
+        # =========================
+        summary = wb.add_worksheet("Summary")
+
+        summary.write("A1","Intrinsic Value")
+        summary.write_formula("B1","=DCF!B15")
+
+        summary.write("A2","Current Price")
+        summary.write_formula("B2", f"={PRICE}")
+
+        summary.write("A3","Upside %")
+        summary.write_formula("B3","=B1/B2-1")
+
+        # =========================
+        # SENSITIVITY TABLE
+        # =========================
+        sens = wb.add_worksheet("Sensitivity")
+
+        sens.write("A1","WACC \\ g")
+
+        g_vals = [0.02,0.03,0.04]
+        wacc_vals = ["WACC!B4-0.01","WACC!B4","WACC!B4+0.01"]
+
+        for i,gv in enumerate(g_vals):
+            sens.write(0,i+1,gv)
+
+        for j,wv in enumerate(wacc_vals):
+            sens.write(j+1,0,wv)
+
+            for i,gv in enumerate(g_vals):
+                sens.write_formula(j+1,i+1,
+                    f"=(DCF!B{last}*(1+{gv})/({wv}-{gv}))"
+                )
 
     return output.getvalue()
-
-st.download_button(
-    "📥 Download Excel Model",
-    data=to_excel(),
-    file_name=f"{ticker}_model.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    use_container_width=True
-)
