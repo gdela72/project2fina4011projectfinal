@@ -1,4 +1,4 @@
-# app.py — Elite Equity Valuation Platform (Final)
+# app.py — Teaching Dashboard Version
 
 import streamlit as st
 import pandas as pd
@@ -7,18 +7,23 @@ import yfinance as yf
 from io import BytesIO
 import time
 
-# ---------------------------
-# PAGE CONFIG
-# ---------------------------
-st.set_page_config(page_title="Elite Equity Valuation", page_icon="📈", layout="wide")
+st.set_page_config(page_title="Equity Valuation Teaching Dashboard", layout="wide")
 
-st.title("📈 Elite Equity Valuation Platform")
-st.caption("DCF + Relative Valuation + Sensitivity Analysis")
+st.title("📈 Equity Valuation Teaching Dashboard")
 
 # ---------------------------
-# SIDEBAR INPUT
+# MODE TOGGLE
 # ---------------------------
-st.sidebar.header("Inputs")
+mode = st.radio(
+    "Select Mode",
+    ["📊 Analyst Mode", "🎓 Teaching Mode"],
+    horizontal=True
+)
+
+# ---------------------------
+# SIDEBAR INPUTS (EDUCATIONAL)
+# ---------------------------
+st.sidebar.header("📘 Model Inputs")
 
 ticker = st.sidebar.text_input("Ticker", "AAPL").upper()
 load_btn = st.sidebar.button("Load Ticker")
@@ -27,14 +32,12 @@ if not load_btn:
     st.stop()
 
 # ---------------------------
-# DATA LOADER (ROBUST)
+# DATA LOADER
 # ---------------------------
 @st.cache_data
 def load_stock(tkr):
     stock = yf.Ticker(tkr)
-
     hist = stock.history(period="1y")
-
     fast = stock.fast_info
 
     data = {
@@ -56,265 +59,164 @@ def load_stock(tkr):
     return data, hist
 
 # ---------------------------
-# LOADING SCREEN
+# LOADING
 # ---------------------------
-with st.spinner(f"Loading data for {ticker}..."):
-    time.sleep(0.6)
+with st.spinner(f"Loading {ticker}..."):
+    time.sleep(0.5)
     data, hist = load_stock(ticker)
 
 if not data["price"]:
-    st.error("No price data found for this ticker.")
+    st.error("No price data available.")
     st.stop()
 
 # ---------------------------
-# USER OVERRIDES
+# INPUTS
 # ---------------------------
-st.sidebar.subheader("Data Overrides")
+st.sidebar.subheader("🏢 Company Data")
 
-current_price = st.sidebar.number_input("Current Price", value=float(data["price"] or 0))
-shares = st.sidebar.number_input("Shares Outstanding (M)", value=float((data["shares"] or 1)/1_000_000))
-market_cap = st.sidebar.number_input("Market Cap (M)", value=float((data["market_cap"] or 0)/1_000_000))
-debt = st.sidebar.number_input("Debt (M)", value=float(data["debt"]/1_000_000))
-cash = st.sidebar.number_input("Cash (M)", value=float(data["cash"]/1_000_000))
-beta = st.sidebar.number_input("Beta", value=float(data["beta"] or 1.0))
-eps = st.sidebar.number_input("Forward EPS", value=float(data["eps"] or 0))
+current_price = st.sidebar.number_input("Stock Price", value=float(data["price"]))
+shares = st.sidebar.number_input("Shares (M)", value=float((data["shares"] or 1)/1e6))
+market_cap = st.sidebar.number_input("Market Cap (M)", value=float((data["market_cap"] or 0)/1e6))
+debt = st.sidebar.number_input("Debt (M)", value=float(data["debt"]/1e6))
+cash = st.sidebar.number_input("Cash (M)", value=float(data["cash"]/1e6))
 
-# ---------------------------
-# WARNINGS
-# ---------------------------
-missing = []
-if not data["eps"]: missing.append("EPS")
-if not data["beta"]: missing.append("Beta")
-if not data["shares"]: missing.append("Shares")
+st.sidebar.subheader("📊 Risk Inputs")
 
-if missing:
-    st.warning(f"Missing data: {', '.join(missing)} — using manual inputs.")
+beta = st.sidebar.number_input("Beta", value=float(data["beta"]))
+rf = st.sidebar.slider("Risk-Free Rate (%)", 0, 10, 4)/100
+erp = st.sidebar.slider("Equity Risk Premium (%)", 0, 10, 5)/100
+cod = st.sidebar.slider("Cost of Debt (%)", 0, 10, 5)/100
+tax = st.sidebar.slider("Tax Rate (%)", 0, 40, 21)/100
 
-# ---------------------------
-# ASSUMPTIONS
-# ---------------------------
-growth = st.sidebar.slider("Growth %", 0, 25, 8)/100
-terminal_growth = st.sidebar.slider("Terminal Growth %", 0, 8, 3)/100
+st.sidebar.subheader("📈 Growth")
+
+growth = st.sidebar.slider("Growth (%)", 0, 25, 8)/100
+terminal_growth = st.sidebar.slider("Terminal Growth (%)", 0, 8, 3)/100
 years = st.sidebar.slider("Forecast Years", 3, 10, 5)
 
-rf = st.sidebar.slider("Risk-Free %", 0, 10, 4)/100
-erp = st.sidebar.slider("ERP %", 0, 10, 5)/100
-tax = st.sidebar.slider("Tax Rate %", 0, 40, 21)/100
-cod = st.sidebar.slider("Cost of Debt %", 0, 10, 5)/100
+st.sidebar.subheader("💵 Cash Flow")
 
-fcfe0 = st.sidebar.number_input("FCFE ($M)", value=50000.0)
 fcff0 = st.sidebar.number_input("FCFF ($M)", value=60000.0)
+
+st.sidebar.subheader("📊 Relative")
+
+eps = st.sidebar.number_input("EPS", value=float(data["eps"] or 0))
 pe = st.sidebar.slider("Target P/E", 5, 40, 20)
 
 # ---------------------------
 # VALUATION
 # ---------------------------
 cost_equity = rf + beta*erp
-wacc = cost_equity if (market_cap+debt)==0 else (
-    (market_cap/(market_cap+debt))*cost_equity +
-    (debt/(market_cap+debt))*cod*(1-tax)
-)
+wacc = (market_cap/(market_cap+debt))*cost_equity + (debt/(market_cap+debt))*cod*(1-tax)
 
-# FCFE
-fcfe_vals = [fcfe0*(1+growth)**t for t in range(1, years+1)]
-pv_fcfe = [cf/(1+cost_equity)**t for t,cf in enumerate(fcfe_vals,1)]
-tv_fcfe = fcfe_vals[-1]*(1+terminal_growth)/(cost_equity-terminal_growth)
-value_fcfe = (sum(pv_fcfe)+tv_fcfe/(1+cost_equity)**years)/shares
-
-# FCFF
 fcff_vals = [fcff0*(1+growth)**t for t in range(1, years+1)]
 pv_fcff = [cf/(1+wacc)**t for t,cf in enumerate(fcff_vals,1)]
-tv_fcff = fcff_vals[-1]*(1+terminal_growth)/(wacc-terminal_growth)
-value_fcff = (sum(pv_fcff)+tv_fcff/(1+wacc)**years - debt + cash)/shares
 
-# Relative
+tv = fcff_vals[-1]*(1+terminal_growth)/(wacc-terminal_growth)
+ev = sum(pv_fcff) + tv/(1+wacc)**years
+equity = ev - debt + cash
+value = equity / shares
+
 pe_value = eps * pe
-avg = np.mean([value_fcfe, value_fcff, pe_value])
+avg = np.mean([value, pe_value])
 
 # ---------------------------
 # DASHBOARD
 # ---------------------------
 c1,c2,c3,c4 = st.columns(4)
 c1.metric("Price", f"${current_price:,.2f}")
-c2.metric("Intrinsic Value", f"${avg:,.2f}")
-c3.metric("Upside", f"{(avg/current_price-1)*100:,.1f}%")
-c4.metric("Signal", "BUY" if avg>current_price else "SELL")
+c2.metric("DCF Value", f"${value:,.2f}")
+c3.metric("Blended Value", f"${avg:,.2f}")
+c4.metric("Signal", "BUY" if avg > current_price else "SELL")
 
-st.subheader("Price Chart")
 st.line_chart(hist["Close"])
 
-def to_excel():
-    output = BytesIO()
-
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        wb = writer.book
-
-        # =========================
-        # INPUTS SHEET
-        # =========================
-        inputs = pd.DataFrame({
-            "Variable": [
-                "Current Price","Shares (M)","Market Cap (M)",
-                "Debt (M)","Cash (M)",
-                "Beta","Risk Free","ERP","Cost of Debt","Tax Rate",
-                "Growth","Terminal Growth","Forecast Years",
-                "FCFF0","Target P/E","EPS"
-            ],
-            "Value": [
-                current_price,shares,market_cap,
-                debt,cash,
-                beta,rf,erp,cod,tax,
-                growth,terminal_growth,years,
-                fcff0,pe,eps
-            ]
-        })
-
-        inputs.to_excel(writer, sheet_name="Inputs", index=False)
-
-        # Helper references
-        def ref(r): return f"Inputs!B{r}"
-
-        PRICE = ref(2)
-        SHARES = ref(3)
-        MCAP = ref(4)
-        DEBT = ref(5)
-        CASH = ref(6)
-        BETA = ref(7)
-        RF = ref(8)
-        ERP = ref(9)
-        COD = ref(10)
-        TAX = ref(11)
-        G = ref(12)
-        TG = ref(13)
-        N = int(years)
-        FCFF0 = ref(14)
-
-        # =========================
-        # WACC SHEET
-        # =========================
-        wacc_ws = wb.add_worksheet("WACC")
-
-        wacc_ws.write("A1","Cost of Equity")
-        wacc_ws.write_formula("B1", f"={RF}+{BETA}*{ERP}")
-
-        wacc_ws.write("A2","Weight Equity")
-        wacc_ws.write_formula("B2", f"={MCAP}/({MCAP}+{DEBT})")
-
-        wacc_ws.write("A3","Weight Debt")
-        wacc_ws.write_formula("B3", f"={DEBT}/({MCAP}+{DEBT})")
-
-        wacc_ws.write("A4","WACC")
-        wacc_ws.write_formula("B4",
-            f"=B2*B1 + B3*{COD}*(1-{TAX})"
-        )
-
-        # =========================
-        # MODEL SHEET (DCF)
-        # =========================
-        ws = wb.add_worksheet("DCF")
-
-        headers = ["Year","FCFF","Discount Factor","PV FCFF"]
-        for i,h in enumerate(headers):
-            ws.write(0,i,h)
-
-        for t in range(1, N+1):
-            row = t
-
-            ws.write(row,0,t)
-
-            # FCFF forecast
-            ws.write_formula(row,1,
-                f"={FCFF0}*(1+{G})^{t}"
-            )
-
-            # Discount factor
-            ws.write_formula(row,2,
-                f"=1/(1+WACC!B4)^{t}"
-            )
-
-            # PV
-            ws.write_formula(row,3,
-                f"=B{row+1}*C{row+1}"
-            )
-
-        last = N + 1
-
-        # Terminal Value
-        ws.write("A10","Terminal Value")
-        ws.write_formula("B10",
-            f"=B{last}*(1+{TG})/(WACC!B4-{TG})"
-        )
-
-        ws.write("A11","PV Terminal")
-        ws.write_formula("B11",
-            f"=B10/(1+WACC!B4)^{N}"
-        )
-
-        ws.write("A13","Enterprise Value")
-        ws.write_formula("B13",
-            f"=SUM(D2:D{last})+B11"
-        )
-
-        ws.write("A14","Equity Value")
-        ws.write_formula("B14",
-            f"=B13-{DEBT}+{CASH}"
-        )
-
-        ws.write("A15","Value per Share")
-        ws.write_formula("B15",
-            f"=B14/{SHARES}"
-        )
-
-        # =========================
-        # SUMMARY SHEET
-        # =========================
-        summary = wb.add_worksheet("Summary")
-
-        summary.write("A1","Intrinsic Value")
-        summary.write_formula("B1","=DCF!B15")
-
-        summary.write("A2","Current Price")
-        summary.write_formula("B2", f"={PRICE}")
-
-        summary.write("A3","Upside %")
-        summary.write_formula("B3","=B1/B2-1")
-
-        # =========================
-        # SENSITIVITY TABLE
-        # =========================
-        sens = wb.add_worksheet("Sensitivity")
-
-        sens.write("A1","WACC \\ g")
-
-        g_vals = [0.02,0.03,0.04]
-        wacc_vals = ["WACC!B4-0.01","WACC!B4","WACC!B4+0.01"]
-
-        for i,gv in enumerate(g_vals):
-            sens.write(0,i+1,gv)
-
-        for j,wv in enumerate(wacc_vals):
-            sens.write(j+1,0,wv)
-
-            for i,gv in enumerate(g_vals):
-                sens.write_formula(j+1,i+1,
-                    f"=(DCF!B{last}*(1+{gv})/({wv}-{gv}))"
-                )
-
-    return output.getvalue()
 # ---------------------------
-# EXCEL DOWNLOAD (FINAL FIX)
+# TEACHING MODE
 # ---------------------------
-
-# Only show if app successfully loaded
-if 'current_price' in locals():
+if mode == "🎓 Teaching Mode":
 
     st.markdown("---")
-    st.subheader("Export Model")
+    st.header("🎓 Step-by-Step Valuation")
 
-    st.download_button(
-        label="📥 Download Full Excel Model",
-        data=to_excel(),
-        file_name=f"{ticker}_IB_model.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True
-    )
+    step = st.selectbox("Select Step", [
+        "Cost of Equity",
+        "WACC",
+        "Forecast",
+        "Discounting",
+        "Terminal Value",
+        "Equity Value",
+        "Final Price"
+    ])
+
+    if step == "Cost of Equity":
+        st.latex(r"r_e = R_f + \beta \cdot ERP")
+        st.write(f"{rf:.2%} + {beta:.2f}×{erp:.2%} = {cost_equity:.2%}")
+
+    elif step == "WACC":
+        st.latex(r"WACC = \frac{E}{E+D}r_e + \frac{D}{E+D}r_d(1-T)")
+        st.write(f"WACC = {wacc:.2%}")
+
+    elif step == "Forecast":
+        st.dataframe(pd.DataFrame({
+            "Year": range(1,years+1),
+            "FCFF": fcff_vals
+        }))
+
+    elif step == "Discounting":
+        st.dataframe(pd.DataFrame({
+            "Year": range(1,years+1),
+            "PV": pv_fcff
+        }))
+
+    elif step == "Terminal Value":
+        st.latex(r"TV = \frac{FCFF_{n+1}}{r-g}")
+        st.write(f"{tv:,.0f}")
+
+    elif step == "Equity Value":
+        st.metric("Equity Value", f"${equity:,.0f}M")
+
+    elif step == "Final Price":
+        st.metric("Intrinsic Price", f"${value:,.2f}")
+
+# ---------------------------
+# VALUE DRIVERS
+# ---------------------------
+st.subheader("📊 Value Drivers")
+
+driver_df = pd.DataFrame({
+    "Component": ["DCF Value", "P/E Value"],
+    "Value": [value, pe_value]
+})
+
+st.bar_chart(driver_df.set_index("Component"))
+
+# ---------------------------
+# INSIGHTS
+# ---------------------------
+st.subheader("🧠 Insights")
+
+if wacc > 0.12:
+    st.warning("High WACC reduces valuation")
+
+if growth > 0.12:
+    st.info("High growth assumption driving value")
+
+if terminal_growth > 0.04:
+    st.warning("Terminal growth may be aggressive")
+
+# ---------------------------
+# EXCEL EXPORT
+# ---------------------------
+def to_excel():
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        pd.DataFrame({"Value":[value]}).to_excel(writer, sheet_name="Summary")
+    return output.getvalue()
+
+st.markdown("---")
+st.download_button(
+    "📥 Download Excel Model",
+    data=to_excel(),
+    file_name=f"{ticker}_model.xlsx"
+)
