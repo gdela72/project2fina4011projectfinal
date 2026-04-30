@@ -266,15 +266,185 @@ Intrinsic Value = Equity Value / Shares Outstanding
 # ---------------------------
 def to_excel():
     output = BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        vals.to_excel(writer, sheet_name="Valuation", index=False)
-        forecast.to_excel(writer, sheet_name="Forecast", index=False)
-        sens.to_excel(writer, sheet_name="Sensitivity")
-    return output.getvalue()
 
-st.download_button(
-    label="📥 Download Excel Model",
-    data=to_excel(),
-    file_name=f"{ticker}_valuation_model.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-)
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        wb = writer.book
+
+        # ---------------------------
+        # INPUTS SHEET
+        # ---------------------------
+        inputs = pd.DataFrame({
+            "Variable": [
+                "Current Price",
+                "Shares Outstanding (M)",
+                "Market Cap (M)",
+                "Debt (M)",
+                "Cash (M)",
+                "Beta",
+                "Risk-Free Rate",
+                "Equity Risk Premium",
+                "Cost of Debt",
+                "Tax Rate",
+                "Growth Rate",
+                "Terminal Growth",
+                "Forecast Years",
+                "FCFE0",
+                "FCFF0",
+                "Target P/E",
+                "EPS"
+            ],
+            "Value": [
+                current_price,
+                shares,
+                market_cap,
+                debt,
+                cash,
+                beta,
+                risk_free,
+                erp,
+                cost_debt,
+                tax_rate,
+                growth,
+                terminal_growth,
+                forecast_years,
+                fcfe0,
+                fcff0,
+                target_pe,
+                eps
+            ]
+        })
+
+        inputs.to_excel(writer, sheet_name="Inputs", index=False)
+        ws_inputs = writer.sheets["Inputs"]
+
+        # ---------------------------
+        # DEFINE CELL REFERENCES
+        # ---------------------------
+        # Excel row numbers (1-based + header)
+        def cell(row): return f"Inputs!B{row}"
+
+        PRICE = cell(2)
+        SHARES = cell(3)
+        MCAP = cell(4)
+        DEBT = cell(5)
+        CASH = cell(6)
+        BETA = cell(7)
+        RF = cell(8)
+        ERP = cell(9)
+        COD = cell(10)
+        TAX = cell(11)
+        G = cell(12)
+        TG = cell(13)
+        N = int(forecast_years)
+        FCFE0 = cell(14)
+        FCFF0 = cell(15)
+        PE = cell(16)
+        EPS = cell(17)
+
+        # ---------------------------
+        # CALC SHEET (DCF MODEL)
+        # ---------------------------
+        ws = wb.add_worksheet("DCF")
+
+        headers = ["Year", "FCFE", "PV FCFE", "FCFF", "PV FCFF"]
+        for col, h in enumerate(headers):
+            ws.write(0, col, h)
+
+        for t in range(1, N + 1):
+            row = t
+
+            # Year
+            ws.write(row, 0, t)
+
+            # FCFE = FCFE0 * (1+g)^t
+            ws.write_formula(row, 1,
+                f"={FCFE0}*(1+{G})^{t}"
+            )
+
+            # Cost of Equity = RF + Beta*ERP
+            cost_eq = f"({RF}+{BETA}*{ERP})"
+
+            # PV FCFE
+            ws.write_formula(row, 2,
+                f"=B{row+1}/(1+{cost_eq})^{t}"
+            )
+
+            # FCFF
+            ws.write_formula(row, 3,
+                f"={FCFF0}*(1+{G})^{t}"
+            )
+
+            # WACC
+            wacc = f"(({MCAP}/({MCAP}+{DEBT}))*({cost_eq}) + ({DEBT}/({MCAP}+{DEBT}))*{COD}*(1-{TAX}))"
+
+            # PV FCFF
+            ws.write_formula(row, 4,
+                f"=D{row+1}/(1+{wacc})^{t}"
+            )
+
+        last_row = N + 1
+
+        # ---------------------------
+        # TERMINAL VALUE (FORMULA)
+        # ---------------------------
+        ws.write("A10", "Terminal Value FCFE")
+        ws.write_formula("B10",
+            f"=B{last_row}*(1+{TG})/(({RF}+{BETA}*{ERP})-{TG})"
+        )
+
+        ws.write("A11", "PV Terminal FCFE")
+        ws.write_formula("B11",
+            f"=B10/(1+({RF}+{BETA}*{ERP}))^{N}"
+        )
+
+        ws.write("A13", "Equity Value FCFE")
+        ws.write_formula("B13",
+            f"=SUM(C2:C{last_row})+B11"
+        )
+
+        ws.write("A14", "Value per Share FCFE")
+        ws.write_formula("B14",
+            f"=B13/{SHARES}"
+        )
+
+        # ---------------------------
+        # FCFF SIDE
+        # ---------------------------
+        ws.write("D10", "Terminal Value FCFF")
+        ws.write_formula("E10",
+            f"=D{last_row}*(1+{TG})/({wacc}-{TG})"
+        )
+
+        ws.write("D11", "PV Terminal FCFF")
+        ws.write_formula("E11",
+            f"=E10/(1+{wacc})^{N}"
+        )
+
+        ws.write("D13", "Enterprise Value")
+        ws.write_formula("E13",
+            f"=SUM(E2:E{last_row})+E11"
+        )
+
+        ws.write("D14", "Equity Value")
+        ws.write_formula("E14",
+            f"=E13-{DEBT}+{CASH}"
+        )
+
+        ws.write("D15", "Value per Share FCFF")
+        ws.write_formula("E15",
+            f"=E14/{SHARES}"
+        )
+
+        # ---------------------------
+        # RELATIVE VALUATION
+        # ---------------------------
+        ws.write("A16", "P/E Value")
+        ws.write_formula("B16", f"={EPS}*{PE}")
+
+        # ---------------------------
+        # FINAL OUTPUT
+        # ---------------------------
+        ws.write("A18", "Average Value")
+        ws.write_formula("B18", "=AVERAGE(B14,E15,B16)")
+
+    return output.getvalue()
