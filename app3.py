@@ -242,13 +242,170 @@ st.metric("Upside", f"{(final_value/price-1)*100:,.1f}%")
 st.subheader("Price Chart")
 st.line_chart(hist["Close"])
 
-# =========================================================
-# EXCEL DOWNLOAD
-# =========================================================
 def to_excel():
     output = BytesIO()
-    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
-        pd.DataFrame({"Intrinsic Value":[final_value]}).to_excel(writer, sheet_name="Summary")
-    return output.getvalue()
 
-st.download_button("📥 Download Excel", data=to_excel(), file_name="valuation.xlsx")
+    with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
+        wb = writer.book
+
+        # =========================
+        # INPUTS SHEET
+        # =========================
+        inputs = [
+            ["Price", price],
+            ["Shares (M)", shares],
+            ["Debt (M)", debt],
+            ["Cash (M)", cash],
+            ["Beta", beta],
+            ["Risk-Free", rf],
+            ["ERP", erp],
+            ["Cost of Debt", cod],
+            ["Tax Rate", tax],
+            ["Growth", g],
+            ["Terminal Growth", tg],
+            ["Years", n],
+            ["FCFF0", fcff0],
+            ["EPS", eps],
+            ["Target P/E", pe],
+        ]
+
+        df_inputs = pd.DataFrame(inputs, columns=["Variable", "Value"])
+        df_inputs.to_excel(writer, sheet_name="Inputs", index=False)
+
+        ws_inputs = writer.sheets["Inputs"]
+
+        # Helper function for clean references
+        def ref(row):
+            return f"Inputs!B{row}"
+
+        PRICE = ref(2)
+        SHARES = ref(3)
+        DEBT = ref(4)
+        CASH = ref(5)
+        BETA = ref(6)
+        RF = ref(7)
+        ERP = ref(8)
+        COD = ref(9)
+        TAX = ref(10)
+        G = ref(11)
+        TG = ref(12)
+        YEARS = int(n)
+        FCFF0 = ref(14)
+        EPS = ref(15)
+        PE = ref(16)
+
+        # =========================
+        # MODEL SHEET
+        # =========================
+        ws = wb.add_worksheet("DCF Model")
+
+        headers = ["Year", "FCFF", "Discount Factor", "PV FCFF"]
+        for col, h in enumerate(headers):
+            ws.write(0, col, h)
+
+        for t in range(1, YEARS + 1):
+            row = t
+
+            # Year
+            ws.write(row, 0, t)
+
+            # FCFF forecast
+            ws.write_formula(row, 1, f"={FCFF0}*(1+{G})^{t}")
+
+            # WACC formula inline
+            wacc = f"(({PRICE}*{SHARES})/(({PRICE}*{SHARES})+{DEBT}))*({RF}+{BETA}*{ERP}) + ({DEBT}/(({PRICE}*{SHARES})+{DEBT}))*{COD}*(1-{TAX})"
+
+            # Discount factor
+            ws.write_formula(row, 2, f"=1/(1+({wacc}))^{t}")
+
+            # PV
+            ws.write_formula(row, 3, f"=B{row+1}*C{row+1}")
+
+        last = YEARS + 1
+
+        # =========================
+        # TERMINAL VALUE
+        # =========================
+        ws.write("A10", "Terminal Value")
+        ws.write_formula(
+            "B10",
+            f"=B{last}*(1+{TG})/(({wacc})-{TG})"
+        )
+
+        ws.write("A11", "PV Terminal")
+        ws.write_formula(
+            "B11",
+            f"=B10/(1+({wacc}))^{YEARS}"
+        )
+
+        # =========================
+        # ENTERPRISE VALUE
+        # =========================
+        ws.write("A13", "Enterprise Value")
+        ws.write_formula(
+            "B13",
+            f"=SUM(D2:D{last})+B11"
+        )
+
+        # =========================
+        # EQUITY VALUE
+        # =========================
+        ws.write("A14", "Equity Value")
+        ws.write_formula(
+            "B14",
+            f"=B13-{DEBT}+{CASH}"
+        )
+
+        ws.write("A15", "Value per Share")
+        ws.write_formula(
+            "B15",
+            f"=B14/{SHARES}"
+        )
+
+        # =========================
+        # RELATIVE VALUATION
+        # =========================
+        ws.write("A17", "P/E Value")
+        ws.write_formula(
+            "B17",
+            f"={EPS}*{PE}"
+        )
+
+        # =========================
+        # FINAL VALUE
+        # =========================
+        ws.write("A19", "Final Value")
+        ws.write_formula(
+            "B19",
+            "=AVERAGE(B15,B17)"
+        )
+
+        # =========================
+        # SUMMARY SHEET
+        # =========================
+        summary = wb.add_worksheet("Summary")
+
+        summary.write("A1", "Intrinsic Value")
+        summary.write_formula("B1", "= 'DCF Model'!B19")
+
+        summary.write("A2", "Current Price")
+        summary.write_formula("B2", f"={PRICE}")
+
+        summary.write("A3", "Upside")
+        summary.write_formula("B3", "=B1/B2-1")
+
+    return output.getvalue()
+# ---------------------------
+# EXCEL DOWNLOAD BUTTON
+# ---------------------------
+excel_data = to_excel()
+
+st.markdown("---")
+
+st.download_button(
+    label="📥 Download Full DCF Excel Model",
+    data=excel_data,
+    file_name=f"{ticker}_DCF_Model.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    use_container_width=True
+)
