@@ -301,3 +301,20 @@ def to_excel():
                 )
 
     return output.getvalue()
+# ---------------------------
+# EXCEL DOWNLOAD (FINAL FIX)
+# ---------------------------
+
+# Only show if app successfully loaded
+if 'current_price' in locals():
+
+    st.markdown("---")
+    st.subheader("Export Model")
+
+    st.download_button(
+        label="📥 Download Full Excel Model",
+        data=to_excel(),
+        file_name=f"{ticker}_IB_model.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
